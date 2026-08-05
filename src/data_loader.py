@@ -74,13 +74,15 @@ class DataLoader:
         self.orders_by_id = {row["order_id"]: row for row in orders_records}
         self.customers_by_id = {row["customer_id"]: row for row in customers_df.to_dict(orient="records")}
 
-        # Pre-group items and payments
+        # Pre-group items and payments with natural sequential ordering
         items_by_order: Dict[str, List[Dict[str, Any]]] = {}
         for item in items_df.to_dict(orient="records"):
             oid = item["order_id"]
             if oid not in items_by_order:
                 items_by_order[oid] = []
             items_by_order[oid].append(item)
+        for oid in items_by_order:
+            items_by_order[oid].sort(key=lambda it: int(it.get("order_item_id", 1)))
         self.items_by_order = items_by_order
 
         payments_by_order: Dict[str, List[Dict[str, Any]]] = {}
@@ -89,6 +91,8 @@ class DataLoader:
             if oid not in payments_by_order:
                 payments_by_order[oid] = []
             payments_by_order[oid].append(pay)
+        for oid in payments_by_order:
+            payments_by_order[oid].sort(key=lambda p: int(p.get("payment_sequential", 1)))
         self.payments_by_order = payments_by_order
         
         # Sort orders chronologically by order_purchase_timestamp
