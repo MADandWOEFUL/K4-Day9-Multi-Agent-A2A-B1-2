@@ -1,6 +1,6 @@
 {
-  "model": "qwen/qwen3-8b",
-  "parameter_size": "8B",
+  "model": "qwen/qwen3.5-9b",
+  "parameter_size": "9B",
   "framework": "Custom Multi-Agent Orchestrator Framework",
   "runtime": "Python 3.12"
 }

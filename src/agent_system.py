@@ -35,7 +35,7 @@ load_dotenv()
 # Domain Constants & Policy Specification (EC_POLICY_V2)
 # ===========================================================================
 
-MODEL_NAME = "qwen/qwen3-8b"
+MODEL_NAME = "qwen/qwen3.5-9b"
 
 PRIMARY_TO_CAUSE: Dict[str, str] = {
     "canceled_order_paid": "ORDER_CANCELED_AFTER_PAYMENT",
@@ -122,12 +122,12 @@ def format_dt(dt: Optional[datetime]) -> Optional[str]:
 class LLMClient:
     """
     Client for interacting with OpenRouter / OpenAI compatible LLM API.
-    Enforces the parameter limit constraint (<= 10B parameters).
+    Supports <= 10B parameter models (e.g. qwen/qwen3.5-9b, qwen/qwen3-8b).
     """
 
-    def __init__(self, model_name: str = MODEL_NAME):
+    def __init__(self, model_name: Optional[str] = None):
         self.provider = os.getenv("llm_provider", "openrouter")
-        self.model = model_name
+        self.model = model_name or os.getenv("LLM_MODEL") or MODEL_NAME
         self.api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
         self.client: Optional[OpenAI] = None
 
@@ -135,7 +135,7 @@ class LLMClient:
             base_url = "https://openrouter.ai/api/v1" if self.provider == "openrouter" else None
             self.client = OpenAI(base_url=base_url, api_key=self.api_key)
 
-    def _chat(self, system: str, user: str, max_tokens: int = 3000, timeout: int = 40) -> Optional[str]:
+    def _chat(self, system: str, user: str, max_tokens: int = 3500, timeout: int = 45) -> Optional[str]:
         """Execute chat completion with timeout and error protection."""
         if not self.client:
             return None
@@ -149,7 +149,11 @@ class LLMClient:
                 max_tokens=max_tokens,
                 timeout=timeout,
             )
-            return res.choices[0].message.content
+            msg = res.choices[0].message
+            content = msg.content
+            if not content and hasattr(msg, "reasoning") and msg.reasoning:
+                content = msg.reasoning
+            return content
         except Exception:
             return None
 
