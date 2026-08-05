@@ -1,10 +1,11 @@
 {
-  "model": "nvidia/nemotron-nano-9b-v2:free",
+  "model": "qwen/qwen3.5-9b",
   "parameter_size": "9B",
+  "framework": "supervisor-worker + message bus + tool layer (custom)",
   "cases_processed": 50,
   "cases_failed": 0,
-  "elapsed_seconds": 2.06,
-  "timestamp_utc": "2026-08-05T09:44:37Z",
+  "elapsed_seconds": 2.01,
+  "timestamp_utc": "2026-08-05T09:53:01Z",
   "supervisor_stats": {
     "case_count": 50,
     "success_count": 50,

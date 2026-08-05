@@ -31,6 +31,33 @@ from .workers import (
     evidence_worker,
     verifier_worker,
 )
+from .llm import MODEL_NAME
+
+
+def _public_delivery(d: dict) -> dict:
+    """Strip internal keys from delivery_analysis per README §6 schema."""
+    return {
+        "delivered_at": d.get("delivered_at"),
+        "estimated_delivery_at": d.get("estimated_delivery_at"),
+        "carrier_handoff_at": d.get("carrier_handoff_at"),
+        "delivery_variance_hours": d.get("delivery_variance_hours"),
+        "seller_handoff_analysis": d.get("seller_handoff_analysis", []),
+        "late_handoff_seller_ids": d.get("late_handoff_seller_ids", []),
+    }
+
+
+def _public_payment(p: dict) -> dict:
+    """Strip internal keys from payment_reconciliation per README §6 schema."""
+    return {
+        "currency": p.get("currency", "BRL"),
+        "item_total_brl": p.get("item_total_brl"),
+        "freight_total_brl": p.get("freight_total_brl"),
+        "expected_total_brl": p.get("expected_total_brl"),
+        "payment_total_brl": p.get("payment_total_brl"),
+        "difference_brl": p.get("difference_brl"),
+        "reconciled": p.get("reconciled"),
+        "payment_types": p.get("payment_types", []),
+    }
 
 
 def run_pipeline(
@@ -74,15 +101,23 @@ def run_pipeline(
             continue
 
         final = supervisor.run_case(case)
-        # write output
         out_path = output_dir / f"{final['case_id']}.json"
-        # remove private keys
+        # Strict output schema per README §6: only the documented top-level keys.
         clean = {
-            k: v
-            for k, v in final.items()
-            if not (k.startswith("_") or k == "order" or k == "customer")
+            "case_id": final["case_id"],
+            "case_assessment": final["case_assessment"],
+            "affected_entities": final["affected_entities"],
+            "customer_context": final["customer_context"],
+            "product_context": final["product_context"],
+            "delivery_analysis": _public_delivery(final["delivery_analysis"]),
+            "payment_reconciliation": _public_payment(
+                final["payment_reconciliation"]
+            ),
+            "root_cause_analysis": final["root_cause_analysis"],
+            "evidence_ids": final["evidence_ids"],
+            "financial_resolution": final["financial_resolution"],
+            "resolution_actions": final["resolution_actions"],
         }
-        clean.setdefault("case_id", final["case_id"])
         out_path.write_text(
             json.dumps(clean, indent=2, ensure_ascii=False), encoding="utf-8"
         )
@@ -93,8 +128,9 @@ def run_pipeline(
     elapsed = round(time.time() - started, 2)
 
     metadata = {
-        "model": "nvidia/nemotron-nano-9b-v2:free",
+        "model": MODEL_NAME,
         "parameter_size": "9B",
+        "framework": "supervisor-worker + message bus + tool layer (custom)",
         "cases_processed": cases_processed,
         "cases_failed": cases_failed,
         "elapsed_seconds": elapsed,

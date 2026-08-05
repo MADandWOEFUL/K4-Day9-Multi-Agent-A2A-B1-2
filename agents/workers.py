@@ -151,7 +151,9 @@ def payment_worker(
     freight_total = sum(to_float(r.get("freight_value")) for r in items)
     payment_total = sum(to_float(r.get("payment_value")) for r in payments_sorted)
     expected_total = item_total + freight_total
-    diff = payment_total - expected_total
+    diff = round(payment_total - expected_total, 2)
+    if diff == 0:
+        diff = 0.0  # normalize -0.0 to 0.0
     reconciled = abs(diff) <= 0.10
     payment_types: List[str] = []
     seen = set()
@@ -421,11 +423,13 @@ def policy_worker(
 
     confidence = _dynamic_confidence(state, primary_issue, fallback)
 
-    # ranked_causes: primary + up to 2 secondary, NO contradictory rank-2
+    # ranked_causes: primary + up to 2 secondary, NEVER duplicate the primary
     ranked: List[Dict[str, Any]] = [{"cause_code": root_cause_code, "rank": 1}]
-    extras = _secondary_root_causes(primary_issue, state)
-    for i, code in enumerate(extras, start=2):
-        ranked.append({"cause_code": code, "rank": i})
+    seen_codes = {root_cause_code}
+    for code in _secondary_root_causes(primary_issue, state):
+        if code not in seen_codes:
+            seen_codes.add(code)
+            ranked.append({"cause_code": code, "rank": len(ranked) + 1})
     ranked = ranked[:3]
 
     state["case_assessment"] = {
@@ -505,17 +509,15 @@ def _dynamic_confidence(state: Dict[str, Any], primary: str, fallback: bool) -> 
 def context_worker(
     state: Dict[str, Any], tools: ToolLayer, bus: MessageBus
 ) -> Dict[str, Any]:
+    """Per README §6 schema: customer_context has only two fields."""
     customer = state.get("customer") or {}
     state["customer_context"] = {
         "customer_unique_id": customer.get("customer_unique_id"),
-        "customer_state": customer.get("customer_state"),
-        "customer_city": customer.get("customer_city"),
-        "related_order_ids": state.get("related_order_ids", []),
+        "related_order_ids": cap(state.get("related_order_ids", []), 5),
     }
-    product_ids = state.get("product_ids", [])
     state["product_context"] = {
-        "product_ids": product_ids,
-        "category_names": state.get("category_names", []),
+        "product_ids": cap(state.get("product_ids", []), 5),
+        "category_names": cap(state.get("category_names", []), 5),
     }
     return state
 
@@ -582,17 +584,31 @@ _LIMITS = {
 def verifier_worker(
     state: Dict[str, Any], tools: ToolLayer, bus: MessageBus
 ) -> Dict[str, Any]:
-    affected = state.get("affected_entities") or {}
-    affected.setdefault("order_ids", [state["claimed_order_id"]])
-    affected.setdefault("item_ids", [])
-    affected.setdefault("seller_ids", state.get("seller_ids", []))
-    affected.setdefault("payment_ids", [
-        pid.split(":", 2)[-1] if pid.startswith("payment:")
-        else pid.split(":", 1)[-1] if ":" in pid
-        else pid
-        for pid in state.get("payment_reconciliation", {}).get("_payment_ids", [])
-    ])
-    state["affected_entities"] = {k: cap(v, _LIMITS[k]) for k, v in affected.items()}
+    order_id = state["claimed_order_id"]
+    raw_payment_ids = state.get("payment_reconciliation", {}).get("_payment_ids", [])
+    payment_ids: List[str] = []
+    for pid in raw_payment_ids:
+        # _payment_ids are stored as "<order_id>:<seq>" already
+        if pid.startswith(f"{order_id}:"):
+            payment_ids.append(pid)
+        elif ":" in pid:
+            # already in correct format
+            payment_ids.append(pid)
+        else:
+            # bare sequential — wrap with order_id
+            payment_ids.append(f"{order_id}:{pid}")
+
+    item_ids = [f"{order_id}:{r['order_item_id']}" for r in state.get("items", [])]
+
+    affected = {
+        "order_ids": [order_id],
+        "item_ids": cap(item_ids, _LIMITS["item_ids"]),
+        "seller_ids": cap(
+            state.get("seller_ids", []), _LIMITS["seller_ids"]
+        ),
+        "payment_ids": cap(payment_ids, _LIMITS["payment_ids"]),
+    }
+    state["affected_entities"] = affected
 
     # verify all evidence still reconstructable
     valid_ev = []
@@ -603,6 +619,8 @@ def verifier_worker(
 
     # cap everything
     for k, lim in _LIMITS.items():
+        if k in affected:
+            continue
         v = state.get(k)
         if isinstance(v, list):
             state[k] = cap(v, lim)
