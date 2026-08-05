@@ -7,4 +7,5 @@ __pycache__/
 trace_*.jsonl
 output_qwen3-8b/
 *.pkl
-
+.venv
+.gemini
