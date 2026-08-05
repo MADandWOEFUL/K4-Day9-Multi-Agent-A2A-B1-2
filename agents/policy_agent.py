@@ -263,10 +263,15 @@ class PolicyAgent(Agent):
         refund: float,
     ) -> Optional[Dict[str, Any]]:
         sys_prompt = (
-            "Bạn là một reviewer chính sách e-commerce. Nhiệm vụ duy nhất là "
-            "trả về JSON {confidence: number 0..1, notes: string}. Không thay "
-            "đổi primary_issue hoặc refund — agent quyết định quyết định đã "
-            "xong rồi. Confidence cao khi facts khớp primary_issue đã chọn."
+            "Role: E-commerce Policy Reviewer "
+            "Task: Calculate confidence score for a pre-determined policy decision based on transaction facts."
+            "CRITICAL RULES:"
+            "1. DO NOT change 'primary_issue' or 'refund'. Decisions are final."
+            "2. Only consider the provided facts and the pre-determined policy decision."
+            "3. Return a confidence score between 0 and 1."
+            "OUTPUT FORMAT:"
+            "Return a JSON object with two fields: 'confidence' (float) and 'notes' (string)."
+            "Confident Score must vary and be reasonable, dont put a fixed value "
         )
         user_prompt = (
             f"case_id: {state['case_id']}\n"

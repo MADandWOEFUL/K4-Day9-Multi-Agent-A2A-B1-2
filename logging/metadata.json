@@ -1,5 +1,5 @@
 {
-  "model": "nvidia/llama-nemotron-embed-vl-1b-v2:free",
+  "model": "qwen/qwen-2.5-7b-instruct",
   "parameter_size": "9B",
   "framework": "Python 3.14 stdlib + custom multi-agent pipeline",
   "runtime": {

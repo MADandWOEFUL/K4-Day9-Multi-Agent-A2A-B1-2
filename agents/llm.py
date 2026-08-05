@@ -21,7 +21,7 @@ from .base import trace
 
 ROOT = Path(__file__).resolve().parent.parent
 
-MODEL_NAME = "nvidia/llama-nemotron-embed-vl-1b-v2:free"
+MODEL_NAME = "qwen/qwen-2.5-7b-instruct"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 
