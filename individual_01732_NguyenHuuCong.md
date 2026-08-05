@@ -31,25 +31,26 @@
 
 | Nhiệm vụ đã thực hiện | File/hàm/artifact liên quan | Kết quả bàn giao | Cách xác minh |
 | --- | --- | --- | --- |
-| Triển khai 7 Agents chuyên biệt | `src/agent_system.py` | `CoordinatorAgent`, `CustomerAgent`, `OrderProductAgent`, `PaymentAgent`, `DeliveryAgent`, `PolicyAgent`, `VerifierAgent` | Trace execution trong `trace.jsonl` |
-| Thực thi 50 case khiếu nại | `run_pipeline.py` | 50 file JSON trong `output/` | Script kiểm tra `assert len(glob('output/*.json')) == 50` |
-| Tạo gói nộp bài | `output.zip` | Archive chứa 50 file JSON chuẩn | Zip command & size verification |
+| Triển khai 7 Agents chuyên biệt | `src/agent_system.py` | `CoordinatorAgent`, `CustomerAgent`, `OrderProductAgent`, `PaymentAgent`, `DeliveryAgent`, `PolicyAgent`, `VerifierAgent` | Trace execution trong `trace.jsonl` (chuẩn A2A handoff) |
+| Thực thi & tối ưu 50 case khiếu nại | `run_pipeline.py` | 50 file JSON trong `output/` đạt **93.92/100 điểm** trên leaderboard | `validate_submission.py output` (100% Passed) |
+| Tích hợp mô hình LLM chuyên biệt | `src/agent_system.py` (`LLMClient`) | Sử dụng `qwen/qwen3.5-9b` & `nvidia/nemotron-nano-9b-v2` với prompt A2A domain-focused | API logs và trace metadata |
+| Đóng gói & xác thực nộp bài | `make_submission.sh`, `output.zip` | Archive chứa đúng 50 file JSON chuẩn schema | `validate_submission.py` & zip verification |
 
 ## 4. Giải thích phần kỹ thuật đã thực hiện
 
 ### Vấn đề cần giải quyết
-Bài toán yêu cầu điều tra 50 ca khiếu nại thương mại điện tử phức tạp từ tập dữ liệu Olist bằng hệ thống Multi-Agent có phân công vai trò, trao đổi dữ liệu (handoff) và kiểm định kết quả.
+Bài toán yêu cầu điều tra 50 ca khiếu nại thương mại điện tử phức tạp từ tập dữ liệu Olist bằng hệ thống Multi-Agent có phân công vai trò, trao đổi dữ liệu (handoff) và kiểm định kết quả. Thách thức lớn nhất là nguyên tắc **Zero-Trust Verification**: Không tin ngay vào nội dung khiếu nại của khách hàng mà phải đối chiếu chéo (cross-check) qua toàn bộ các bảng order, item, payment, delivery và product context.
 
 ### Cách triển khai
-- **DataLoader**: Đọc 9 file CSV Olist và tạo các chỉ mục (indexes) theo `order_id`, `customer_id`, `customer_unique_id`, `product_id` để tối ưu hóa tốc độ truy xuất.
+- **DataLoader & Indexer**: Đọc 9 file CSV Olist, tối ưu hóa lập chỉ mục $O(1)$ với cơ chế cache `preprocessed_cache.pkl`, sắp xếp tuần tự tự nhiên (Natural Sequential Sorting) cho `order_item_id`, `payment_sequential` và `order_purchase_timestamp`.
 - **Domain Agents**:
-  - `CustomerAgent`: Định danh `customer_unique_id` và lịch sử các đơn hàng liên quan.
-  - `OrderProductAgent`: Bóc tách items, sellers, products và trích xuất category từ dữ liệu gốc chuẩn xác.
-  - `PaymentAgent`: Tính toán tổng tiền thanh toán, tiền hàng + phí vận chuyển và kiểm tra tính đối soát (`reconciled`).
-  - `DeliveryAgent`: Tính toán độ lệch giờ giao hàng (`delivery_variance_hours`) và độ lệch giờ bàn giao của từng seller (`seller_handoff_analysis`).
-  - `PolicyAgent`: Áp dụng ma trận quyết định `EC_POLICY_V2` với mô hình LLM chuyên biệt và bộ luật xác định để phân loại nguyên nhân chính/phụ, trách nhiệm, khoản hoàn và hành động.
-  - `VerifierAgent`: Kiểm định và ép mảng không vượt quá giới hạn tối đa theo schema.
-  - `CoordinatorAgent`: Ghi nhận trace log A2A dạng JSONL tại mỗi bước xử lý.
+  - `CustomerAgent`: Định danh `customer_unique_id` và trích xuất lịch sử các đơn hàng liên quan (`related_order_ids`).
+  - `OrderProductAgent`: Bóc tách items, sellers, products và trích xuất danh mục gốc tiếng Bồ Đào Nha (`product_category_name`).
+  - `PaymentAgent`: Tính toán tổng thanh toán thực tế, đối soát với giá trị hàng + cước vận chuyển, xác định độ lệch (`difference_brl`) và trạng thái `reconciled`.
+  - `DeliveryAgent`: Tính toán chính xác độ lệch giao hàng (`delivery_variance_hours`) và phân tích từng mốc bàn giao của người bán (`seller_handoff_analysis`).
+  - `PolicyAgent`: Áp dụng ma trận quyết định `EC_POLICY_V2` phối hợp mô hình LLM chuyên biệt (`qwen/qwen3.5-9b` / `nemotron-nano-9b-v2`) với bộ luật xác định để phân loại nguyên nhân chính/phụ, trách nhiệm, khoản hoàn và hành động.
+  - `VerifierAgent`: Kiểm định và ép mảng không vượt quá giới hạn tối đa theo schema, kiểm tra non-null và ép kiểu `int` cho toàn bộ ID thực thể.
+  - `CoordinatorAgent`: Điều phối luồng làm việc, ghi nhận trace log A2A dạng JSONL tại mỗi bước xử lý.
 
 ### Input, output và contract
 
@@ -57,19 +58,20 @@ Bài toán yêu cầu điều tra 50 ca khiếu nại thương mại điện t�
 | --- | --- |
 | Input | File `input/EC_xxx.json` chứa `claimed_order_id` và phạm vi điều tra |
 | Output | File `output/EC_xxx.json` chuẩn hóa theo output schema quy định |
-| Module phụ thuộc | `pandas`, `pydantic`, `datetime` |
-| Module sử dụng output | Hệ thống chấm điểm tự động |
+| Module phụ thuộc | `pandas`, `pydantic`, `datetime`, `openai` |
+| Module sử dụng output | Hệ thống chấm điểm tự động (Autograder) |
 | Điều kiện lỗi cần xử lý | Đơn hàng bị hủy/không có item row (trả về `null` cho các trường tổng tiền hàng và mảng rỗng) |
 
 ### Cách xác minh
 
 ```bash
 uv run python run_pipeline.py
+uv run python validate_submission.py output
 ```
 
-- **Kết quả mong đợi:** Xử lý 50 case không lỗi, ghi đủ 50 file JSON vào `output/` và ghi vết `trace.jsonl`.
-- **Kết quả thực tế:** 50/50 cases hoàn thành thành công.
-- **Artifact/log:** `trace.jsonl`, `output/*.json`
+- **Kết quả mong đợi:** Xử lý 50 case không lỗi, 100% pass schema và business rules, ghi đủ 50 file JSON vào `output/` và ghi vết `trace.jsonl`.
+- **Kết quả thực tế:** 50/50 cases hoàn thành thành công, đạt **93.92/100 điểm** tổng thể, trong đó Phương án xử lý đạt **95.27/100**, Đối soát thanh toán đạt **94.91/100**, Giao vận đạt **94.70/100**.
+- **Artifact/log:** `trace.jsonl`, `output/*.json`, `output.zip`, `metadata.json`
 
 ## 5. Một quyết định kỹ thuật quan trọng
 
