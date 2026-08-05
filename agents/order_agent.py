@@ -53,8 +53,16 @@ class OrderAgent(Agent):
                 product_ids.append(pid)
             prod = self.index.product(pid) if pid else None
             if prod:
-                pt = prod.get("product_category_name")
-                en = self.index.category_english(pt) if pt else None
+                pt = (prod.get("product_category_name") or "").strip()
+                en = self.index.category_english(pt)
+                # Normalize to English Title Case: translate PT -> EN if available,
+                # then convert underscore_format to Title Case.
+                # Examples: beleza_saude -> Health Beauty
+                #           health_beauty -> Health Beauty
+                #           furniture_decoracao -> Furniture Decoracao
+                if not en or en == pt:
+                    en = pt
+                en = en.replace("_", " ").title() if en else None
                 if en and en not in category_seen:
                     category_seen.add(en)
                     category_names.append(en)

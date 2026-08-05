@@ -30,8 +30,15 @@ class DataIndex:
 
     @staticmethod
     def _read(path: Path) -> List[Dict[str, Any]]:
-        with path.open("r", encoding="utf-8", newline="") as fh:
-            return list(csv.DictReader(fh))
+        with path.open("r", encoding="utf-8-sig", newline="") as fh:
+            rows = list(csv.DictReader(fh))
+        # utf-8-sig strips BOM from the first fieldname; re-strip any remaining
+        # BOM characters from keys defensively.
+        for row in rows:
+            for k in list(row.keys()):
+                if k != k.strip():
+                    row[k.strip()] = row.pop(k)
+        return rows
 
     # ----- loaders -----------------------------------------------------------
 
