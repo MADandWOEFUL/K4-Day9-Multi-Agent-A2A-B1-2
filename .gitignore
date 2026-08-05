@@ -1,3 +1,4 @@
 /input/*.json
 *.env
 *.zip
+/output/*.json
