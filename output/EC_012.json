@@ -38,8 +38,8 @@
   },
   "payment_reconciliation": {
     "currency": "BRL",
-    "item_total_brl": null,
-    "freight_total_brl": null,
+    "item_total_brl": 0.0,
+    "freight_total_brl": 0.0,
     "expected_total_brl": null,
     "payment_total_brl": 226.23,
     "difference_brl": null,

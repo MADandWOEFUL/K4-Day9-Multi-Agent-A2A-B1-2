@@ -36,7 +36,7 @@ class LLMClient:
     LLMClient connects to OpenRouter / OpenAI API using keys loaded from .env.
     Uses model qwen/qwen3-8b (8B parameters <= 10B limit).
     """
-    MODEL_NAME = "qwen/qwen3-8b"
+    MODEL_NAME = "qwen/qwen3.5-9b"
 
     def __init__(self):
         self.provider = os.getenv("llm_provider", "openrouter")
@@ -251,8 +251,8 @@ class PaymentAgent:
                 "payment_ids": payment_ids,
                 "payment_reconciliation": {
                     "currency": "BRL",
-                    "item_total_brl": None,
-                    "freight_total_brl": None,
+                    "item_total_brl": 0.0,
+                    "freight_total_brl": 0.0,
                     "expected_total_brl": None,
                     "payment_total_brl": payment_total,
                     "difference_brl": None,
