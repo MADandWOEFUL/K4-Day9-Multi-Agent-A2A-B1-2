@@ -37,7 +37,7 @@
       "e0d64dcfaa3b6db5c54ca298ae101d05"
     ],
     "category_names": [
-      "watches_gifts"
+      "relogios_presentes"
     ]
   },
   "delivery_analysis": {
@@ -95,6 +95,6 @@
     "recommended_refund_brl": 0.0
   },
   "resolution_actions": [
-    "explain_valid_split_payment"
+    "verify_payment_allocation"
   ]
 }
