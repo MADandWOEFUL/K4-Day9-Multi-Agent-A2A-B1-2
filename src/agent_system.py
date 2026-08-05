@@ -36,7 +36,7 @@ class LLMClient:
     LLMClient connects to OpenRouter / OpenAI API using keys loaded from .env.
     Uses model qwen/qwen3-8b (8B parameters <= 10B limit).
     """
-    MODEL_NAME = "qwen/qwen3.5-9b"
+    MODEL_NAME = "qwen/qwen3-8b"
 
     def __init__(self):
         self.provider = os.getenv("llm_provider", "openrouter")
