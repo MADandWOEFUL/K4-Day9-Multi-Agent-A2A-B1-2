@@ -1,0 +1,7 @@
+[project]
+name = "k4-day9-multi-agent-a2a-b1-2"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []

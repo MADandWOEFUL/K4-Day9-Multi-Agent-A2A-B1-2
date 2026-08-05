@@ -1,0 +1,6 @@
+{
+  "model": "nvidia/nemotron-nano-9b-v2:free",
+  "parameter_size": "9B",
+  "framework": "Custom Multi-Agent Orchestrator Framework",
+  "runtime": "Python 3.12"
+}
