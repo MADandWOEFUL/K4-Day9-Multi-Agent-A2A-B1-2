@@ -71,11 +71,30 @@ sequenceDiagram
 
 ---
 
-## 5. Traceability & Audit Logging
+## 5. Zero-Trust Verification & Hybrid Decision Architecture
+
+Hệ thống kết hợp giữa **LLM Reasoning (`qwen/qwen3.5-9b` / `nemotron-nano-9b-v2`)** và **Deterministic Rule Engine**:
+
+1. **Zero-Trust Data Policy**:
+   - Không tin tưởng trực tiếp vào lời khiếu nại của khách hàng trong `customer_request.message`.
+   - Mọi kết luận đều phải đối chiếu chéo (cross-check) qua cơ sở dữ liệu Olist gồm 9 bảng dữ liệu quan hệ (`orders`, `order_items`, `order_payments`, `customers`, `products`, `sellers`).
+
+2. **Schema Hard Gates & Type Safety**:
+   - Tất cả các mảng đầu ra đều bị chặn cứng bởi giới hạn tối đa theo chuẩn đề bài:
+     - Tối đa 5 `order_ids`, 5 `item_ids`, 3 `seller_ids`, 5 `payment_ids`.
+     - Tối đa 5 `related_order_ids`, 5 `product_ids`, 5 `category_names`.
+     - Tối đa 3 `ranked_causes`, 3 `responsible_parties`, 20 `evidence_ids`, 5 `resolution_actions`.
+   - Ép kiểu số nguyên (`int`) cho các trường thứ tự `order_item_id` và `payment_sequential` trong các ID định danh (`item:<oid>:<seq>`, `payment:<oid>:<seq>`).
+   - Xử lý chuẩn xác `null` cho các đơn hàng không có item row (hủy hoặc chưa tạo item).
+
+---
+
+## 6. Traceability & Audit Logging
 
 Mọi thao tác của hệ thống được ghi lại theo định dạng JSON Line trong `trace.jsonl` với cấu trúc:
 - `timestamp`: Thời gian ISO thực hiện action.
 - `case_id`: Mã case đang xử lý.
 - `agent`: Tên Agent thực thi (CoordinatorAgent, CustomerAgent, ...).
-- `action`: Tên hành động/bước handoff.
+- `action`: Tên hành động/bước handoff A2A.
 - `details`: Nội dung dữ liệu bàn giao (payload state).
+- `metadata.json`: Lưu trữ thông tin thực thi tổng thể (tổng số case, thời gian chạy, mô hình sử dụng).
