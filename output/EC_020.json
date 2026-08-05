@@ -7,7 +7,7 @@
       "repeat_customer"
     ],
     "case_status": "action_required",
-    "confidence": 0.92
+    "confidence": 0.98
   },
   "affected_entities": {
     "order_ids": [
@@ -96,7 +96,7 @@
     "recommended_refund_brl": 68.64
   },
   "resolution_actions": [
-    "review_seller_handoff",
-    "verify_refund_completion"
+    "refund_freight",
+    "review_seller_handoff"
   ]
 }

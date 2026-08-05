@@ -7,7 +7,7 @@
       "multiple_categories"
     ],
     "case_status": "action_required",
-    "confidence": 0.92
+    "confidence": 0.98
   },
   "affected_entities": {
     "order_ids": [
@@ -91,7 +91,7 @@
     "recommended_refund_brl": 75.98
   },
   "resolution_actions": [
-    "review_carrier_delay",
-    "verify_refund_completion"
+    "refund_freight",
+    "review_carrier_delay"
   ]
 }

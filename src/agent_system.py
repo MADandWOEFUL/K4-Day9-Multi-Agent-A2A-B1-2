@@ -106,7 +106,7 @@ class LLMClient:
             "=== ADDITIONAL ACTIONS (append after primary_action in order if applicable) ===\n"
             "- review_seller_handoff   : if primary_issue = late_delivery_seller\n"
             "- review_carrier_delay    : if primary_issue = late_delivery_logistics\n"
-            "- verify_refund_completion: if case_status = action_required\n"
+            "- verify_refund_completion: if primary_issue in (canceled_order_paid, unavailable_order_paid)\n"
             "- coordinate_multi_seller_case: if multi_seller_order in secondary_issues\n"
             "- verify_payment_allocation: if split_payment in secondary_issues AND primary_issue != valid_split_payment\n\n"
             "=== OUTPUT FORMAT (strict JSON, no markdown) ===\n"
@@ -209,10 +209,12 @@ class OrderProductAgent:
             if pid:
                 prod = self.data_loader.get_product(pid)
                 if prod:
-                    # Keep the original Portuguese category name as-is
-                    cat_pt = prod.get("product_category_name", "")
-                    if cat_pt and cat_pt not in category_names:
-                        category_names.append(cat_pt)
+                    # Keep the original Portuguese category name as-is (sanitize against NaN)
+                    cat_pt = prod.get("product_category_name")
+                    if isinstance(cat_pt, str) and cat_pt.strip() and cat_pt.strip().lower() != "nan":
+                        clean_cat = cat_pt.strip()
+                        if clean_cat not in category_names:
+                            category_names.append(clean_cat)
 
         return {
             "items": items,
@@ -263,6 +265,8 @@ class PaymentAgent:
         freight_total = round(sum(float(i.get("freight_value", 0)) for i in items), 2)
         expected_total = round(item_total + freight_total, 2)
         difference = round(payment_total - expected_total, 2)
+        if abs(difference) < 1e-9:
+            difference = 0.0
         reconciled = abs(difference) <= 0.10
 
         return {
@@ -429,41 +433,30 @@ class PolicyAgent:
                 refund_amount, len(order_product_ctx["affected_entities"]["seller_ids"]), len(payments)
             )
 
-        # Build ranked_causes with secondary root causes (before evidence)
+        # Ranked causes: primary root cause at rank 1
         ranked = [{"cause_code": cause_code, "rank": 1}]
-        extras = self._secondary_causes(primary_issue, del_analysis)
-        for i, code in enumerate(extras, start=2):
-            ranked.append({"cause_code": code, "rank": i})
-        ranked = ranked[:3]
 
-        # --- Evidence IDs — always deterministic (must be traceable to real data) ---
+        # --- Evidence IDs — deterministic and strictly traceable to real data (§5) ---
         evidence_ids = [f"order:{claimed_order_id}"]
         for item in items[:5]:
             evidence_ids.append(f"item:{claimed_order_id}:{item['order_item_id']}")
         for pay in payments[:5]:
             evidence_ids.append(f"payment:{claimed_order_id}:{pay['payment_sequential']}")
-        # Seller evidence: responsible sellers first (late_handoff), then all sellers
+        # Seller evidence: ONLY include seller if seller is a responsible party (§5)
         seen_sellers = set()
-        for sid in del_analysis.get("late_handoff_seller_ids", [])[:3]:
-            if sid and sid not in seen_sellers:
-                seen_sellers.add(sid)
-                evidence_ids.append(f"seller:{sid}")
-        for sid in order_product_ctx["affected_entities"]["seller_ids"][:3]:
-            if sid and sid not in seen_sellers:
-                seen_sellers.add(sid)
-                evidence_ids.append(f"seller:{sid}")
-        # Policy evidence: primary cause + secondary causes, dedup
-        seen_codes = set()
-        for cause_entry in ranked:
-            code = cause_entry["cause_code"]
-            if code and code not in seen_codes:
-                seen_codes.add(code)
-                evidence_ids.append(f"policy:{code}")
+        for party in responsible_parties:
+            if party.get("party_type") == "seller":
+                sid = party.get("party_id")
+                if sid and sid not in seen_sellers:
+                    seen_sellers.add(sid)
+                    evidence_ids.append(f"seller:{sid}")
+        # Policy evidence: policy root cause code
+        evidence_ids.append(f"policy:{cause_code}")
 
         # Compute dynamic confidence based on data completeness & reconciliation
-        conf = 0.85
+        conf = 0.88
         if len(items) > 0 and len(payments) > 0:
-            conf += 0.05
+            conf += 0.04
         if del_analysis.get("delivered_at") and del_analysis.get("estimated_delivery_at"):
             conf += 0.03
         if len(items) > 0:
@@ -472,11 +465,11 @@ class PolicyAgent:
             conf += 0.02
         # Per-rule modifier
         bonus = {
-            "canceled_order_paid": 0.02,
-            "unavailable_order_paid": 0.02,
-            "late_delivery_seller": 0.03,
-            "late_delivery_logistics": 0.02,
-            "valid_split_payment": 0.02,
+            "canceled_order_paid": 0.01,
+            "unavailable_order_paid": 0.01,
+            "late_delivery_seller": 0.01,
+            "late_delivery_logistics": 0.01,
+            "valid_split_payment": 0.01,
             "unsupported_late_claim": 0.0,
         }.get(primary_issue, 0.0)
         conf += bonus
@@ -529,7 +522,6 @@ class PolicyAgent:
         # Harmonize primary_issue and cause_code if there is a mismatch
         if cause in CAUSE_TO_PRIMARY and primary != CAUSE_TO_PRIMARY[cause]:
             if facts.get("order_status") in ("canceled", "unavailable"):
-                # Order status takes priority: determine primary from status
                 if facts.get("order_status") == "canceled":
                     primary = "canceled_order_paid"
                 else:
@@ -547,21 +539,13 @@ class PolicyAgent:
         if cause not in self.VALID_CAUSE_CODES:
             return None
 
-        # Validate secondary_issues is a list of known codes
-        valid_secondary = {
-            "multi_item_order", "multi_seller_order", "split_payment",
-            "repeat_customer", "multiple_categories"
-        }
-        secondary = llm_result.get("secondary_issues", [])
-        if not isinstance(secondary, list):
-            secondary = []
-        # Filter to only valid codes in correct order
-        order_map = {v: i for i, v in enumerate([
-            "multi_item_order", "multi_seller_order", "split_payment",
-            "repeat_customer", "multiple_categories"
-        ])}
-        secondary = [s for s in secondary if s in valid_secondary]
-        secondary = sorted(secondary, key=lambda x: order_map.get(x, 99))
+        # Build secondary_issues strictly from ground truth facts in fixed order (§4)
+        secondary = []
+        if facts.get("item_count", 0) >= 2:      secondary.append("multi_item_order")
+        if facts.get("seller_count", 0) >= 2:    secondary.append("multi_seller_order")
+        if facts.get("payment_count", 0) >= 2:   secondary.append("split_payment")
+        if facts.get("has_other_orders", False): secondary.append("repeat_customer")
+        if facts.get("category_count", 0) >= 2:  secondary.append("multiple_categories")
 
         # Enforce case_status, refund_amount, and responsible_parties consistency with primary_issue
         payment_total = facts.get("payment_total") or 0.0
@@ -588,9 +572,11 @@ class PolicyAgent:
         # case_status follows refund (per EC_POLICY_V2)
         case_status = "action_required" if refund > 0 else "no_action"
 
-        actions = llm_result.get("resolution_actions", [])
-        if not isinstance(actions, list) or not actions:
-            actions = self._build_actions(primary, case_status, secondary, refund, facts.get("seller_count", 0), facts.get("payment_count", 0))
+        # Build resolution_actions strictly adhering to §4
+        actions = self._build_actions(
+            primary, case_status, secondary, refund,
+            facts.get("seller_count", 0), facts.get("payment_count", 0)
+        )
 
         return {
             "reasoning":           llm_result.get("reasoning", ""),
@@ -600,7 +586,7 @@ class PolicyAgent:
             "case_status":         case_status,
             "refund_amount":       refund,
             "responsible_parties": responsible,
-            "resolution_actions":  actions[:5],
+            "resolution_actions":  actions,
         }
 
     # ------------------------------------------------------------------
@@ -609,8 +595,8 @@ class PolicyAgent:
 
     def _deterministic_decision(self, facts: Dict[str, Any]) -> Dict[str, Any]:
         order_status    = facts["order_status"]
-        payment_total   = facts["payment_total"] or 0
-        freight_total   = facts["freight_total"] or 0
+        payment_total   = facts["payment_total"] or 0.0
+        freight_total   = facts["freight_total"] or 0.0
         reconciled      = facts["reconciled"]
         payment_count   = facts["payment_count"]
         item_count      = facts["item_count"]
@@ -620,42 +606,44 @@ class PolicyAgent:
         del_variance    = facts["delivery_variance_hours"]
         late_sellers    = facts["late_handoff_seller_ids"]
 
-        if order_status == "canceled":
+        # EC_POLICY_V2 Priority Hierarchy (§4)
+        # 1. canceled_order_paid
+        if order_status == "canceled" and payment_total > 0:
             primary, cause = "canceled_order_paid", "ORDER_CANCELED_AFTER_PAYMENT"
             case_status, refund = "action_required", payment_total
             responsible = [{"party_type": "platform", "party_id": "OLIST_PLATFORM"}]
-            primary_action = "issue_full_refund"
 
-        elif order_status == "unavailable":
+        # 2. unavailable_order_paid
+        elif order_status == "unavailable" and payment_total > 0:
             primary, cause = "unavailable_order_paid", "ORDER_UNAVAILABLE_AFTER_PAYMENT"
             case_status, refund = "action_required", payment_total
             responsible = [{"party_type": "platform", "party_id": "OLIST_PLATFORM"}]
-            primary_action = "issue_full_refund"
 
+        # 3. late_delivery_seller
         elif del_variance is not None and del_variance > 0 and len(late_sellers) > 0:
             primary, cause = "late_delivery_seller", "SELLER_HANDOFF_AFTER_LIMIT"
             case_status, refund = "action_required", freight_total
             responsible = [{"party_type": "seller", "party_id": sid} for sid in late_sellers[:3]]
-            primary_action = "refund_freight"
 
+        # 4. late_delivery_logistics
         elif del_variance is not None and del_variance > 0 and len(late_sellers) == 0:
             primary, cause = "late_delivery_logistics", "CARRIER_DELIVERED_AFTER_ESTIMATE"
             case_status, refund = "action_required", freight_total
             responsible = [{"party_type": "logistics_provider", "party_id": "LOGISTICS_PROVIDER"}]
-            primary_action = "refund_freight"
 
+        # 5. valid_split_payment
         elif payment_count >= 2 and reconciled is True:
             primary, cause = "valid_split_payment", "MULTIPLE_PAYMENTS_RECONCILED"
             case_status, refund = "no_action", 0.0
             responsible = []
-            primary_action = "explain_valid_split_payment"
 
+        # 6. unsupported_late_claim
         else:
             primary, cause = "unsupported_late_claim", "DELIVERY_WITHIN_ESTIMATE"
             case_status, refund = "no_action", 0.0
             responsible = []
-            primary_action = "reject_late_refund"
 
+        # Secondary issues in exact fixed order (§4)
         secondary = []
         if item_count >= 2:      secondary.append("multi_item_order")
         if seller_count >= 2:    secondary.append("multi_seller_order")
@@ -663,19 +651,7 @@ class PolicyAgent:
         if has_other_orders:     secondary.append("repeat_customer")
         if category_count >= 2:  secondary.append("multiple_categories")
 
-        actions = [primary_action]
-        if primary == "late_delivery_seller":
-            actions.append("review_seller_handoff")
-            if del_variance is not None and del_variance > 72:
-                actions.append("review_carrier_delay")
-        elif primary == "late_delivery_logistics":
-            actions.append("review_carrier_delay")
-        if refund > 0:
-            actions.append("verify_refund_completion")
-        if seller_count >= 2:
-            actions.append("coordinate_multi_seller_case")
-        if payment_count >= 2 and primary != "valid_split_payment":
-            actions.append("verify_payment_allocation")
+        actions = self._build_actions(primary, case_status, secondary, refund, seller_count, payment_count)
 
         return {
             "reasoning":           "Deterministic fallback (LLM unavailable).",
@@ -685,28 +661,14 @@ class PolicyAgent:
             "case_status":         case_status,
             "refund_amount":       refund,
             "responsible_parties": responsible,
-            "resolution_actions":  actions[:5],
+            "resolution_actions":  actions,
         }
-
-    def _secondary_causes(self, primary: str, del_analysis: Dict[str, Any]) -> List[str]:
-        """Return 0-2 extra cause codes ranked below the primary."""
-        extras: List[str] = []
-        variance = del_analysis.get("delivery_variance_hours")
-        if primary == "late_delivery_seller":
-            extras.append("CARRIER_DELIVERED_AFTER_ESTIMATE")
-            if isinstance(variance, (int, float)) and variance > 72:
-                extras.append("DELIVERY_WITHIN_ESTIMATE")
-        elif primary in ("late_delivery_logistics", "canceled_order_paid",
-                         "unavailable_order_paid", "valid_split_payment"):
-            extras.append("DELIVERY_WITHIN_ESTIMATE")
-        # unsupported_late_claim → no extras
-        return extras[:2]
 
     def _build_actions(self, primary_issue: str, case_status: str, secondary_issues: List[str],
                        refund: float = 0.0, seller_count: int = 0, payment_count: int = 0) -> List[str]:
-        """Deterministically build resolution_actions from primary_issue (used as safety net).
-        Follows strict §4 ordering: primary action → review_seller/carrier →
-        verify_refund_completion → coordinate_multi_seller_case → verify_payment_allocation."""
+        """Deterministically build resolution_actions following strict §4 ordering:
+        Primary action -> review_seller_handoff / review_carrier_delay ->
+        verify_refund_completion -> coordinate_multi_seller_case -> verify_payment_allocation."""
         action_map = {
             "canceled_order_paid":     "issue_full_refund",
             "unavailable_order_paid":  "issue_full_refund",
@@ -717,16 +679,25 @@ class PolicyAgent:
         }
         primary_action = action_map.get(primary_issue, "reject_late_refund")
         actions = [primary_action]
+
+        # Step 1: review_seller_handoff OR review_carrier_delay
         if primary_issue == "late_delivery_seller":
             actions.append("review_seller_handoff")
         elif primary_issue == "late_delivery_logistics":
             actions.append("review_carrier_delay")
-        if refund > 0:
+
+        # Step 2: verify_refund_completion (for full refund on canceled/unavailable)
+        if primary_issue in ("canceled_order_paid", "unavailable_order_paid"):
             actions.append("verify_refund_completion")
+
+        # Step 3: coordinate_multi_seller_case (if multi_seller_order)
         if seller_count >= 2 or "multi_seller_order" in secondary_issues:
             actions.append("coordinate_multi_seller_case")
-        if payment_count >= 2 and primary_issue != "valid_split_payment":
+
+        # Step 4: verify_payment_allocation (if split_payment AND not valid_split_payment)
+        if (payment_count >= 2 or "split_payment" in secondary_issues) and primary_issue != "valid_split_payment":
             actions.append("verify_payment_allocation")
+
         return actions[:5]
 
 

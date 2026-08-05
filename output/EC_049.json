@@ -8,7 +8,7 @@
       "split_payment"
     ],
     "case_status": "no_action",
-    "confidence": 0.92
+    "confidence": 0.98
   },
   "affected_entities": {
     "order_ids": [
@@ -107,7 +107,6 @@
   },
   "resolution_actions": [
     "explain_valid_split_payment",
-    "verify_payment_allocation",
     "coordinate_multi_seller_case"
   ]
 }

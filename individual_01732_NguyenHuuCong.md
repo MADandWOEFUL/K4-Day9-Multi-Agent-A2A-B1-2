@@ -5,7 +5,7 @@
 | Thông tin | Nội dung |
 | --- | --- |
 | Họ và tên | Nguyễn Hữu Công |
-| MSSV | K4-A2A-01234 |
+| MSSV | K4-A2A-01732 |
 | Khóa/Lớp | K4 |
 | Vai trò chính | Lead Multi-Agent Architect & Policy Engineer |
 | Ngày hoàn thành | 2026-08-05 |
@@ -44,10 +44,10 @@ Bài toán yêu cầu điều tra 50 ca khiếu nại thương mại điện t�
 - **DataLoader**: Đọc 9 file CSV Olist và tạo các chỉ mục (indexes) theo `order_id`, `customer_id`, `customer_unique_id`, `product_id` để tối ưu hóa tốc độ truy xuất.
 - **Domain Agents**:
   - `CustomerAgent`: Định danh `customer_unique_id` và lịch sử các đơn hàng liên quan.
-  - `OrderProductAgent`: Bóc tách items, sellers, products và dịch tên category từ tiếng Bồ Đào Nha sang tiếng Anh.
+  - `OrderProductAgent`: Bóc tách items, sellers, products và trích xuất category từ dữ liệu gốc chuẩn xác.
   - `PaymentAgent`: Tính toán tổng tiền thanh toán, tiền hàng + phí vận chuyển và kiểm tra tính đối soát (`reconciled`).
   - `DeliveryAgent`: Tính toán độ lệch giờ giao hàng (`delivery_variance_hours`) và độ lệch giờ bàn giao của từng seller (`seller_handoff_analysis`).
-  - `PolicyAgent`: Áp dụng ma trận quyết định `EC_POLICY_V2` để phân loại nguyên nhân chính/phụ, trách nhiệm, khoản hoàn và hành động.
+  - `PolicyAgent`: Áp dụng ma trận quyết định `EC_POLICY_V2` với mô hình LLM chuyên biệt và bộ luật xác định để phân loại nguyên nhân chính/phụ, trách nhiệm, khoản hoàn và hành động.
   - `VerifierAgent`: Kiểm định và ép mảng không vượt quá giới hạn tối đa theo schema.
   - `CoordinatorAgent`: Ghi nhận trace log A2A dạng JSONL tại mỗi bước xử lý.
 
@@ -64,7 +64,7 @@ Bài toán yêu cầu điều tra 50 ca khiếu nại thương mại điện t�
 ### Cách xác minh
 
 ```bash
-.venv/bin/python run_pipeline.py
+uv run python run_pipeline.py
 ```
 
 - **Kết quả mong đợi:** Xử lý 50 case không lỗi, ghi đủ 50 file JSON vào `output/` và ghi vết `trace.jsonl`.

@@ -1,0 +1,8 @@
+version = 1
+revision = 3
+requires-python = ">=3.12"
+
+[[package]]
+name = "k4-day9-multi-agent-a2a-b1-2"
+version = "0.1.0"
+source = { virtual = "." }

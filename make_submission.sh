@@ -4,8 +4,8 @@
 
 set -e
 
-SRC_DIR="${1:-output_qwen3-8b}"          # thư mục nguồn, mặc định là output/
-OUT_ZIP="${2:-output.zip}"  # tên file zip, mặc định là submission.zip
+SRC_DIR="${1:-output}"          # thư mục nguồn, mặc định là output/
+OUT_ZIP="${2:-output.zip}"  # tên file zip, mặc định là output.zip
 
 echo "📦 Đóng gói từ '${SRC_DIR}/' -> '${OUT_ZIP}' ..."
 
@@ -24,7 +24,7 @@ fi
 
 # Tạo zip với cấu trúc output/EC_*.json
 rm -f "${OUT_ZIP}"
-python3 -c "
+uv run python -c "
 import zipfile, glob, os, sys
 src = sys.argv[1]; out = sys.argv[2]
 with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as zf:

@@ -6,7 +6,7 @@
       "multi_item_order"
     ],
     "case_status": "action_required",
-    "confidence": 0.92
+    "confidence": 0.95
   },
   "affected_entities": {
     "order_ids": [
@@ -81,6 +81,7 @@
     "recommended_refund_brl": 242.62
   },
   "resolution_actions": [
+    "issue_full_refund",
     "verify_refund_completion"
   ]
 }

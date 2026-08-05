@@ -6,3 +6,5 @@ __pycache__/
 *.py[cod]
 trace_*.jsonl
 output_qwen3-8b/
+*.pkl
+

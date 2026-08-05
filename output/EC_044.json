@@ -7,7 +7,7 @@
       "multi_seller_order"
     ],
     "case_status": "no_action",
-    "confidence": 0.92
+    "confidence": 0.97
   },
   "affected_entities": {
     "order_ids": [
@@ -91,5 +91,8 @@
     "currency": "BRL",
     "recommended_refund_brl": 0.0
   },
-  "resolution_actions": []
+  "resolution_actions": [
+    "reject_late_refund",
+    "coordinate_multi_seller_case"
+  ]
 }
