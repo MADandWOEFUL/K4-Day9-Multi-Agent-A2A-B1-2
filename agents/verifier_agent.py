@@ -38,39 +38,59 @@ class VerifierAgent(Agent):
     # ---------- evidence reconstruction ---------------------------------
 
     def _valid_evidence(self, state: Dict[str, Any]) -> List[str]:
+        """Bug #4 fix / Improvement A: richer, smarter evidence composition.
+
+        Priority order (later entries only added when the previous tier
+        left room under the 20-evidence cap):
+          1. order:<id> (always when order exists)
+          2. item:<oid>:<iid> (one per item row, up to 5)
+          3. payment:<oid>:<seq> (one per payment row, up to 5)
+          4. seller:<sid> — responsible sellers first (late_handoff_seller_ids),
+             then remaining sellers from the order, up to 3
+          5. policy:<code> — the primary root cause plus every secondary
+             cause from ranked_causes, dedup
+        """
         order_id = state.get("claimed_order_id")
         valid: List[str] = []
         if order_id and self.index.order(order_id) is not None:
             valid.append(f"order:{order_id}")
 
-        items = state.get("items", [])
-        for r in items:
-            ev = f"item:{order_id}:{r['order_item_id']}"
-            valid.append(ev)
+        items = state.get("items", []) or []
+        for r in items[: _LIMITS["item_ids"]]:
+            valid.append(f"item:{order_id}:{r['order_item_id']}")
 
         payment_ids: List[str] = (
             state.get("payment_reconciliation", {}).get("_payment_ids") or []
         )
-        for pid in payment_ids:
-            # ensure `payment:` prefix per evidence spec
+        for pid in payment_ids[: _LIMITS["payment_ids"]]:
             if pid.startswith("payment:"):
                 valid.append(pid)
             else:
                 valid.append(f"payment:{pid}")
 
-        seller_ids = state.get("seller_ids", []) or state.get(
-            "delivery_analysis", {}
-        ).get("late_handoff_seller_ids", [])
-        for sid in seller_ids:
-            valid.append(f"seller:{sid}")
-
-        root_cause = (
-            state.get("root_cause_analysis", {})
-            .get("ranked_causes", [{}])[0]
-            .get("cause_code")
+        # Sellers — responsible first, then all sellers
+        delivery = state.get("delivery_analysis", {}) or {}
+        responsible_sellers: List[str] = list(
+            delivery.get("late_handoff_seller_ids") or []
         )
-        if root_cause:
-            valid.append(f"policy:{root_cause}")
+        all_sellers: List[str] = list(state.get("seller_ids", []) or [])
+        seen_sellers: Set[str] = set()
+        for sid in responsible_sellers + all_sellers:
+            if sid and sid not in seen_sellers:
+                seen_sellers.add(sid)
+                valid.append(f"seller:{sid}")
+            if len(seen_sellers) >= _LIMITS["seller_ids"]:
+                break
+
+        # Policy — primary then secondary root causes, dedup
+        seen_codes: Set[str] = set()
+        for cause in (
+            state.get("root_cause_analysis", {}).get("ranked_causes") or []
+        ):
+            code = cause.get("cause_code")
+            if code and code not in seen_codes:
+                seen_codes.add(code)
+                valid.append(f"policy:{code}")
 
         # Dedup while keeping stable order
         seen: Set[str] = set()

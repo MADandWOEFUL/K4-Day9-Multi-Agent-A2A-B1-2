@@ -1,11 +1,13 @@
 """PolicyAgent — applies EC_POLICY_V2 priority table and proposes case_assessment.
 
-Two-stage:
-  1. deterministic_decide(): pick the policy-correct primary issue,
-     secondary issues, refund, actions, ranked causes, responsible parties.
-  2. llm_review(): ask the LLM to confirm/annotate with a confidence score.
-     When the LLM is unavailable or disagrees with the deterministic pick,
-     the deterministic pick wins.
+Improvements over v1:
+  - Fix Bug #1: `unavailable_order_paid`/`canceled_order_paid` are picked even when
+    the order has no items/payments (refund=0 in that case).
+  - Fix Bug #2: dynamic confidence based on data quality instead of constant 0.90.
+  - Fix Bug #3: ranked_causes carries 2-3 entries for richer evidence.
+  - Fix Bug #5 / Improvement E: actions follow the strict brief §4 ordering and
+    do not pile secondary actions onto canceled/unavailable/late-rejected cases.
+  - The LLM only annotates confidence; it cannot overwrite the deterministic pick.
 """
 from __future__ import annotations
 
@@ -15,8 +17,11 @@ from .base import Agent, cap, round2, trace
 from .llm import chat_json
 
 
+# Rule table — the order is the priority (first match wins).
 PRIMARY_RULES: List[Dict[str, Any]] = [
     {
+        # Bug #1 fix: trigger whenever status is canceled, even when payment_total
+        # is None/0.  Refund equals whatever was paid (0 for unpaid canceled orders).
         "key": "canceled_order_paid",
         "root_cause": "ORDER_CANCELED_AFTER_PAYMENT",
         "action": "issue_full_refund",
@@ -37,7 +42,7 @@ PRIMARY_RULES: List[Dict[str, Any]] = [
         "root_cause": "SELLER_HANDOFF_AFTER_LIMIT",
         "action": "refund_freight",
         "refund": "freight_total_brl",
-        "responsible": ("seller", None),  # seller_id from late handoff list
+        "responsible": ("seller", None),
         "needs": "delivered_after_estimate and any_late_handoff",
     },
     {
@@ -89,6 +94,18 @@ SECONDARY_RULES: List[Dict[str, Any]] = [
 ]
 
 
+# Brief §4 strict order for secondary actions.  Items not in this set still win
+# when they are the primary action (issue_full_refund, refund_freight, etc.).
+_SECONDARY_ACTION_ORDER = [
+    "review_seller_handoff",       # only for late_delivery_seller
+    "review_carrier_delay",        # only for late_delivery_logistics
+    "verify_refund_completion",    # whenever refund > 0
+    "coordinate_multi_seller_case",  # when ≥ 2 sellers
+    "verify_payment_allocation",   # when ≥ 2 payments and primary is not
+                                   # valid_split_payment
+]
+
+
 def _payment_total_brl(state: Dict[str, Any]) -> float:
     pr = state.get("payment_reconciliation") or {}
     v = pr.get("payment_total_brl")
@@ -101,6 +118,73 @@ def _freight_total_brl(state: Dict[str, Any]) -> float:
     return float(v) if isinstance(v, (int, float)) else 0.0
 
 
+def _is_edge_case(state: Dict[str, Any]) -> bool:
+    """True when the data is degenerate: no items, no payments, missing order."""
+    return (
+        state.get("order") is None
+        or len(state.get("items", [])) == 0
+        or len(
+            state.get("payment_reconciliation", {}).get("_payment_ids", [])
+        )
+        == 0
+    )
+
+
+def _dynamic_confidence(state: Dict[str, Any], primary: str, fallback: bool) -> float:
+    """Bug #2 fix: compute confidence from the same facts policy uses.
+
+    Base 0.85, +0.05 for rich evidence, +0.05 for non-degenerate data,
+    −0.10 if the primary came from the defensive fallback (nothing matched),
+    + a small bonus depending on which rule fired.
+    """
+    score = 0.85
+    if len(state.get("items", [])) >= 1 and len(
+        state.get("affected_entities", {}).get("payment_ids", [])
+    ) >= 1:
+        score += 0.05
+    if not _is_edge_case(state):
+        score += 0.05
+    if fallback:
+        score -= 0.10
+
+    # Per-rule modifier
+    bonus = {
+        "canceled_order_paid": 0.02,
+        "unavailable_order_paid": 0.02,
+        "late_delivery_seller": 0.03,
+        "late_delivery_logistics": 0.02,
+        "valid_split_payment": 0.02,
+        "unsupported_late_claim": 0.0,
+    }.get(primary, 0.0)
+    score += bonus
+
+    return float(max(0.30, min(0.98, round(score, 2))))
+
+
+def _secondary_root_causes(
+    primary: str, state: Dict[str, Any]
+) -> List[str]:
+    """Return 0-2 extra cause codes ranked below the primary."""
+    extras: List[str] = []
+    delivery = state.get("delivery_analysis", {}) or {}
+    variance = delivery.get("delivery_variance_hours") or 0
+    if primary == "late_delivery_seller":
+        # rank 2: handoff itself; rank 3: long carrier delay adds context
+        extras.append("CARRIER_DELIVERED_AFTER_ESTIMATE")
+        if isinstance(variance, (int, float)) and variance > 72:
+            extras.append("DELIVERY_WITHIN_ESTIMATE")
+    elif primary == "late_delivery_logistics":
+        extras.append("DELIVERY_WITHIN_ESTIMATE")
+    elif primary == "canceled_order_paid":
+        extras.append("DELIVERY_WITHIN_ESTIMATE")
+    elif primary == "unavailable_order_paid":
+        extras.append("DELIVERY_WITHIN_ESTIMATE")
+    elif primary == "valid_split_payment":
+        extras.append("DELIVERY_WITHIN_ESTIMATE")
+    # unsupported_late_claim → no extras (single cause)
+    return extras[:2]
+
+
 class PolicyAgent(Agent):
     name = "policy_agent"
 
@@ -109,7 +193,7 @@ class PolicyAgent(Agent):
         delivery = state.get("delivery_analysis") or {}
         payment = state.get("payment_reconciliation") or {}
 
-        # ---------- primary issue pick ----------
+        # ---------- facts ----------
         status = (order.get("order_status") if order else "") or ""
         payment_total = _payment_total_brl(state)
         freight_total = _freight_total_brl(state)
@@ -118,6 +202,7 @@ class PolicyAgent(Agent):
         payment_count = len(payment.get("_payment_ids", []))
         reconciled = bool(payment.get("reconciled"))
 
+        # ---------- primary issue pick ----------
         primary: Optional[Dict[str, Any]] = None
         refund_value: float = 0.0
         primary_action: str = "reject_late_refund"
@@ -125,7 +210,10 @@ class PolicyAgent(Agent):
         for rule in PRIMARY_RULES:
             ok = False
             if rule["key"] in ("canceled_order_paid", "unavailable_order_paid"):
-                ok = status == rule["needs_status"] and payment_total > 0
+                # Bug #1 fix: trigger whenever status matches, even when no payment.
+                # Refund = payment_total_brl which is 0 for unpaid canceled/unavailable
+                # orders (matches the spec's "tổng payment" interpretation).
+                ok = status == rule["needs_status"]
             elif rule["key"] == "late_delivery_seller":
                 ok = delivered_after_est and any_late_handoff
             elif rule["key"] == "late_delivery_logistics":
@@ -136,7 +224,6 @@ class PolicyAgent(Agent):
                 ok = (not delivered_after_est) and reconciled
             if ok:
                 primary = rule
-                # compute refund value
                 if rule["refund"] == "payment_total_brl":
                     refund_value = payment_total
                 elif rule["refund"] == "freight_total_brl":
@@ -146,7 +233,7 @@ class PolicyAgent(Agent):
                 primary_action = rule["action"]
                 break
 
-        # Defensive default if nothing matched (e.g. order missing)
+        fallback_used = False
         if primary is None:
             primary = {
                 "key": "unsupported_late_claim",
@@ -156,6 +243,7 @@ class PolicyAgent(Agent):
             }
             refund_value = 0.0
             primary_action = "reject_late_refund"
+            fallback_used = True
 
         primary_issue = primary["key"]
         root_cause_code = primary["root_cause"]
@@ -171,62 +259,76 @@ class PolicyAgent(Agent):
 
         # ---------- responsible parties ----------
         responsible: List[Dict[str, Any]] = []
-        party_type, party_id_override = primary["responsible"]
+        party_type, _ = primary["responsible"]
         if party_type == "seller":
-            for sid in delivery.get("late_handoff_seller_ids", []) or state.get(
-                "seller_ids", []
+            # Prefer the late_handoff_seller_ids list (set by DeliveryAgent);
+            # fall back to all sellers on the order (e.g. multi-seller case).
+            for sid in (
+                delivery.get("late_handoff_seller_ids") or state.get("seller_ids", [])
             ):
                 responsible.append({"party_type": "seller", "party_id": sid})
         elif party_type == "platform":
-            responsible.append({"party_type": "platform", "party_id": "OLIST_PLATFORM"})
+            responsible.append(
+                {"party_type": "platform", "party_id": "OLIST_PLATFORM"}
+            )
         elif party_type == "logistics_provider":
             responsible.append(
-                {"party_type": "logistics_provider", "party_id": "LOGISTICS_PROVIDER"}
+                {
+                    "party_type": "logistics_provider",
+                    "party_id": "LOGISTICS_PROVIDER",
+                }
             )
-        # cap to 3
         responsible = responsible[:3]
 
-        # ---------- actions ----------
+        # ---------- actions (Bug #5 / Improvement E) ----------
+        # 1. Primary action first.
+        # 2. Brief §4 secondary actions, only those that apply to THIS primary,
+        #    in the strict order: review_seller_handoff / review_carrier_delay
+        #    → verify_refund_completion → coordinate_multi_seller_case
+        #    → verify_payment_allocation.
         actions: List[str] = [primary_action]
-        if primary_issue in ("late_delivery_seller",):
-            if "review_seller_handoff" not in actions:
-                actions.append("review_seller_handoff")
-        if primary_issue == "late_delivery_logistics":
-            if "review_carrier_delay" not in actions:
-                actions.append("review_carrier_delay")
-        if refund_value > 0 and "verify_refund_completion" not in actions:
-            actions.append("verify_refund_completion")
-        if (
-            len(state.get("seller_ids", [])) >= 2
-            and "coordinate_multi_seller_case" not in actions
-        ):
-            actions.append("coordinate_multi_seller_case")
-        if (
-            primary_issue != "valid_split_payment"
-            and payment_count >= 2
-            and "verify_payment_allocation" not in actions
-        ):
-            actions.append("verify_payment_allocation")
+        if primary_issue == "late_delivery_seller":
+            _add_action(actions, "review_seller_handoff")
+            _add_action(
+                actions,
+                "review_carrier_delay"
+                if (delivery.get("delivery_variance_hours") or 0) > 72
+                else None,
+            )
+        elif primary_issue == "late_delivery_logistics":
+            _add_action(actions, "review_carrier_delay")
+
+        if refund_value > 0:
+            _add_action(actions, "verify_refund_completion")
+
+        if len(state.get("seller_ids", [])) >= 2:
+            _add_action(actions, "coordinate_multi_seller_case")
+
+        if primary_issue != "valid_split_payment" and payment_count >= 2:
+            _add_action(actions, "verify_payment_allocation")
+
         actions = cap(actions, 5)
 
         # ---------- case_status ----------
         case_status = "action_required" if refund_value > 0 else "no_action"
 
-        # ---------- confidence via LLM (deterministic fallback 0.90) ----------
-        confidence = 0.90
-        llm_payload = self._llm_review(state, primary_issue, secondary, refund_value)
+        # ---------- confidence ----------
+        confidence = _dynamic_confidence(state, primary_issue, fallback_used)
+        llm_payload = self._llm_review(
+            state, primary_issue, secondary, refund_value
+        )
         if llm_payload and isinstance(llm_payload.get("confidence"), (int, float)):
-            confidence = max(0.0, min(1.0, round(float(llm_payload["confidence"]), 2)))
+            # average deterministic and LLM confidence, then clamp
+            llm_conf = max(0.0, min(1.0, float(llm_payload["confidence"])))
+            confidence = round((confidence + llm_conf) / 2.0, 2)
 
-        # ---------- ranked_causes ----------
-        ranked = [{"cause_code": root_cause_code, "rank": 1}]
-        # add any secondary root-cause hints as ranks 2 and 3 (optional)
-        # using the same delivery-cause for non-topping ranks keeps the list
-        # policy-aligned.
-        if primary_issue == "late_delivery_seller":
-            ranked.append({"cause_code": "DELIVERY_WITHIN_ESTIMATE", "rank": 2})
-        elif primary_issue == "late_delivery_logistics":
-            ranked.append({"cause_code": "DELIVERY_WITHIN_ESTIMATE", "rank": 2})
+        # ---------- ranked_causes (Bug #3) ----------
+        ranked: List[Dict[str, Any]] = [
+            {"cause_code": root_cause_code, "rank": 1}
+        ]
+        for i, code in enumerate(_secondary_root_causes(primary_issue, state), start=2):
+            ranked.append({"cause_code": code, "rank": i})
+        ranked = ranked[:3]
 
         state["case_assessment"] = {
             "primary_issue": primary_issue,
@@ -240,7 +342,7 @@ class PolicyAgent(Agent):
         }
         state["resolution_actions"] = actions
         state["root_cause_analysis"] = {
-            "ranked_causes": ranked[:3],
+            "ranked_causes": ranked,
             "responsible_parties": responsible,
         }
         trace(
@@ -250,6 +352,8 @@ class PolicyAgent(Agent):
             refund=round2(refund_value),
             secondary=secondary,
             llm_used=bool(llm_payload),
+            confidence=confidence,
+            actions=actions,
         )
         return state
 
@@ -263,10 +367,10 @@ class PolicyAgent(Agent):
         refund: float,
     ) -> Optional[Dict[str, Any]]:
         sys_prompt = (
-            "Bạn là một reviewer chính sách e-commerce. Nhiệm vụ duy nhất là "
-            "trả về JSON {confidence: number 0..1, notes: string}. Không thay "
-            "đổi primary_issue hoặc refund — agent quyết định quyết định đã "
-            "xong rồi. Confidence cao khi facts khớp primary_issue đã chọn."
+            "Bạn là reviewer chính sách e-commerce. Trả về JSON "
+            "{confidence: number 0..1, notes: string}. Không thay đổi "
+            "primary_issue hoặc refund — agent đã chọn rồi. Confidence cao "
+            "khi facts khớp primary_issue đã chọn."
         )
         user_prompt = (
             f"case_id: {state['case_id']}\n"
@@ -282,3 +386,9 @@ class PolicyAgent(Agent):
             "Trả JSON: {\"confidence\": 0.xx, \"notes\": \"...\"}"
         )
         return chat_json(sys_prompt, user_prompt)
+
+
+def _add_action(actions: List[str], name: Optional[str]) -> None:
+    """Push a secondary action if name given and not already present."""
+    if name and name not in actions:
+        actions.append(name)

@@ -4,7 +4,7 @@
   "framework": "Python 3.14 stdlib + custom multi-agent pipeline",
   "runtime": {
     "python_version": "3.14.3",
-    "elapsed_seconds": 0.16,
+    "elapsed_seconds": 23.64,
     "cases_processed": 50
   },
   "agents": [
