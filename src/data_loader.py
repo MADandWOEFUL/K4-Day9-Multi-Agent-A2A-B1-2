@@ -91,9 +91,15 @@ class DataLoader:
             payments_by_order[oid].append(pay)
         self.payments_by_order = payments_by_order
         
+        # Sort orders chronologically by order_purchase_timestamp
+        sorted_orders = sorted(
+            orders_records,
+            key=lambda r: str(r.get("order_purchase_timestamp", ""))
+        )
+
         # Build map of customer_unique_id to list of order_ids
         customer_orders: Dict[str, List[str]] = {}
-        for row in orders_records:
+        for row in sorted_orders:
             cid = row["customer_id"]
             if cid in self.customers_by_id:
                 uniq_id = self.customers_by_id[cid]["customer_unique_id"]

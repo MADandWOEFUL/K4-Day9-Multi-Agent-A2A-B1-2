@@ -6,7 +6,7 @@
       "multi_item_order"
     ],
     "case_status": "action_required",
-    "confidence": 0.95
+    "confidence": 0.97
   },
   "affected_entities": {
     "order_ids": [
