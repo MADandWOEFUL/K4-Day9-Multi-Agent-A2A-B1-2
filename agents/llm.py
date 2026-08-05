@@ -21,7 +21,7 @@ from .base import trace
 
 ROOT = Path(__file__).resolve().parent.parent
 
-MODEL_NAME = "nvidia/nemotron-nano-9b-v2:free"
+MODEL_NAME = "nvidia/llama-nemotron-embed-vl-1b-v2:free"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 

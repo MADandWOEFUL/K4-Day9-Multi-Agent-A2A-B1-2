@@ -1,10 +1,10 @@
 {
-  "model": "nvidia/nemotron-nano-9b-v2:free",
+  "model": "nvidia/llama-nemotron-embed-vl-1b-v2:free",
   "parameter_size": "9B",
   "framework": "Python 3.14 stdlib + custom multi-agent pipeline",
   "runtime": {
     "python_version": "3.14.3",
-    "elapsed_seconds": 0.29,
+    "elapsed_seconds": 0.23,
     "cases_processed": 50
   },
   "agents": [
