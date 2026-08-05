@@ -93,7 +93,6 @@
     "recommended_refund_brl": 50.37
   },
   "resolution_actions": [
-    "refund_freight",
     "review_carrier_delay",
     "verify_refund_completion"
   ]

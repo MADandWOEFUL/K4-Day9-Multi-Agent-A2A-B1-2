@@ -102,6 +102,7 @@
   },
   "resolution_actions": [
     "explain_valid_split_payment",
+    "verify_payment_allocation",
     "coordinate_multi_seller_case"
   ]
 }

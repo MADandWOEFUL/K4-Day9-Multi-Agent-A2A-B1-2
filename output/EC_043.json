@@ -72,7 +72,6 @@
     "recommended_refund_brl": 18.37
   },
   "resolution_actions": [
-    "issue_full_refund",
     "verify_refund_completion"
   ]
 }

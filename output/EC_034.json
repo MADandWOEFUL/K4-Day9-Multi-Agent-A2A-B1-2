@@ -1,7 +1,7 @@
 {
   "case_id": "EC_034",
   "case_assessment": {
-    "primary_issue": "unavailable_order_paid",
+    "primary_issue": "unsupported_late_claim",
     "secondary_issues": [
       "repeat_customer"
     ],
@@ -72,7 +72,6 @@
     "recommended_refund_brl": 85.14
   },
   "resolution_actions": [
-    "issue_full_refund",
     "verify_refund_completion"
   ]
 }

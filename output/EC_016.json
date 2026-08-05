@@ -94,7 +94,6 @@
     "recommended_refund_brl": 18.15
   },
   "resolution_actions": [
-    "refund_freight",
     "review_carrier_delay",
     "verify_refund_completion",
     "verify_payment_allocation"

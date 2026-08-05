@@ -92,7 +92,6 @@
     "recommended_refund_brl": 0.0
   },
   "resolution_actions": [
-    "reject_late_refund",
     "coordinate_multi_seller_case"
   ]
 }

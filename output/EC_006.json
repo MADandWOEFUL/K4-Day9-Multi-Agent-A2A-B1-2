@@ -98,7 +98,6 @@
     "recommended_refund_brl": 60.4
   },
   "resolution_actions": [
-    "refund_freight",
     "review_seller_handoff",
     "verify_refund_completion"
   ]

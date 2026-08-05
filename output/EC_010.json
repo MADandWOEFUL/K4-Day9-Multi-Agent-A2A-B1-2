@@ -95,7 +95,6 @@
     "recommended_refund_brl": 0.0
   },
   "resolution_actions": [
-    "explain_valid_split_payment",
-    "coordinate_multi_seller_case"
+    "explain_valid_split_payment"
   ]
 }
