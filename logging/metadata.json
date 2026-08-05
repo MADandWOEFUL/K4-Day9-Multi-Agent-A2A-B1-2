@@ -1,29 +1,15 @@
 {
   "model": "nvidia/nemotron-nano-9b-v2:free",
   "parameter_size": "9B",
-  "framework": "Python 3.14 stdlib + custom multi-agent pipeline",
-  "runtime": {
-    "python_version": "3.14.3",
-    "elapsed_seconds": 27.73,
-    "cases_processed": 50
+  "cases_processed": 50,
+  "cases_failed": 0,
+  "elapsed_seconds": 2.06,
+  "timestamp_utc": "2026-08-05T09:44:37Z",
+  "supervisor_stats": {
+    "case_count": 50,
+    "success_count": 50,
+    "failure_count": 0
   },
-  "agents": [
-    "coordinator",
-    "customer_agent",
-    "order_agent",
-    "payment_agent",
-    "delivery_agent",
-    "policy_agent",
-    "verifier_agent"
-  ],
-  "policy_version": "EC_POLICY_V2",
-  "data_sources": [
-    "olist_orders_dataset.csv",
-    "olist_order_items_dataset.csv",
-    "olist_order_payments_dataset.csv",
-    "olist_customers_dataset.csv",
-    "olist_products_dataset.csv",
-    "olist_sellers_dataset.csv",
-    "product_category_name_translation.csv"
-  ]
+  "tool_calls": 0,
+  "messages": 900
 }

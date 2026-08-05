@@ -45,18 +45,42 @@ class PaymentAgent(Agent):
             payments = idx.payments(order_id)
 
         if not items:
+            # Bug fix: orders with no item rows (e.g. canceled/unavailable)
+            # can still have payments.  We still emit payment_total_brl so
+            # the policy agent can compute the correct refund.
+            payments_sorted = sorted(
+                payments, key=lambda r: int(r.get("payment_sequential", "0") or 0)
+            )
+            payment_total = sum(
+                self._to_float(r.get("payment_value")) for r in payments_sorted
+            )
+            payment_types = []
+            seen = set()
+            for r in payments_sorted:
+                t = (r.get("payment_type") or "").strip()
+                if t and t not in seen:
+                    seen.add(t)
+                    payment_types.append(t)
+            payment_ids = [
+                f"{order_id}:{r['payment_sequential']}" for r in payments_sorted
+            ]
             state["payment_reconciliation"] = {
                 "currency": "BRL",
                 "item_total_brl": None,
                 "freight_total_brl": None,
                 "expected_total_brl": None,
-                "payment_total_brl": None,
+                "payment_total_brl": round2(payment_total),
                 "difference_brl": None,
                 "reconciled": None,
-                "payment_types": [],
-                "_payment_ids": [],
+                "payment_types": payment_types,
+                "_payment_ids": cap(payment_ids, 5),
             }
-            trace(self.name, case_id=state["case_id"], status="no_items")
+            trace(
+                self.name,
+                case_id=state["case_id"],
+                status="no_items_but_has_payments",
+                payment_count=len(payments_sorted),
+            )
             return state
 
         # payments sorted by payment_sequential int
